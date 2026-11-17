@@ -10,6 +10,8 @@
 (installer=$(mktemp) && trap 'rm -f -- "$installer"' EXIT && curl -fsSL https://github.com/yasinmalek82/neo-tunnel/releases/download/v0.2.2/install.sh -o "$installer" && if [ "$(id -u)" -eq 0 ]; then bash "$installer"; else sudo bash "$installer"; fi)
 ```
 
+بعد از نصب، فرمان `neo-tunnel` در `/usr/local/bin` در دسترس است و منو را از هر دایرکتوری باز می‌کند. با کاربر root بنویسید `neo-tunnel` و با کاربر عادی بنویسید `sudo neo-tunnel`.
+
 ### اتصال سرور خارج
 
 1. روی ایران `Set up Iran` را انتخاب کنید. منو آدرس ایران، پورت ورودی، پورت برنامه در خارج و گزینهٔ فوروارد UDP را می‌پرسد و در پایان دستور یک‌خطی نصب خارج را می‌دهد.
