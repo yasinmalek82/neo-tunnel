@@ -27,7 +27,7 @@ import (
 const configHome = "/etc/neo-tunnel"
 const adminHome = "/var/lib/neo-tunnel-admin"
 const templateHome = "/usr/local/share/neo-tunnel"
-const releaseVersion = "v0.2.1"
+const releaseVersion = "v0.2.2"
 const releaseURL = "https://github.com/yasinmalek82/neo-tunnel/releases/download/" + releaseVersion
 
 func runSetup(ctx context.Context, command string, args []string) error {
@@ -46,6 +46,27 @@ func runSetup(ctx context.Context, command string, args []string) error {
 	}
 	defer unlock()
 	switch command {
+	case "enable-udp":
+		if len(args) != 0 {
+			return errors.New("usage: neo-tunnel enable-udp")
+		}
+		return enableInstalledUDP(ctx)
+	case "ingress":
+		if len(args) == 1 && args[0] == "rollback" {
+			var prior siteSettings
+			if err := readJSON(filepath.Join(adminHome, "ingress-previous.json"), &prior); err != nil {
+				return err
+			}
+			scope := "local"
+			if prior.Bind == "0.0.0.0" {
+				scope = "public"
+			}
+			return changeIngress(ctx, strconv.Itoa(prior.Port), scope, false)
+		}
+		if len(args) != 2 {
+			return errors.New("usage: neo-tunnel ingress PORT local|public or ingress rollback")
+		}
+		return changeIngress(ctx, args[0], args[1], true)
 	case "setup-iran":
 		in := bufio.NewReader(os.Stdin)
 		if len(args) == 0 {
@@ -109,7 +130,7 @@ func terminalMenu(ctx context.Context) error {
 	}
 	in := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("\nNEO Tunnel\n1. Set up Iran\n2. Join foreign server\n3. Manage tunnel\n4. Pilot report\n5. Open dashboard\n0. Exit\n")
+		fmt.Print("\nNEO Tunnel\n1. Set up Iran\n2. Join foreign server\n3. Manage tunnel\n4. Pilot report\n5. Open dashboard\n6. Set up Telegram on Sweden\n0. Exit\n")
 		choice, err := ask(in, "Select an option", "")
 		if errors.Is(err, io.EOF) || choice == "0" {
 			return nil
@@ -185,6 +206,8 @@ func terminalMenu(ctx context.Context) error {
 			if err == nil {
 				fmt.Printf("On your computer: ssh -N -L 8787:127.0.0.1:8787 USER@%s\nOpen http://127.0.0.1:8787/\n", site.Host)
 			}
+		case "6":
+			err = setupTelegram(ctx, in, "setup")
 		default:
 			fmt.Println("Choose a number from the menu.")
 		}
@@ -241,38 +264,50 @@ func iranWizard(ctx context.Context, in *bufio.Reader) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	host, err := ask(in, "Iran IPv4 address or DNS name", "")
+	host, err := ask(in, "Iran address for Sweden (example: iran.example.net)", "")
 	if err != nil {
 		return err
 	}
-	public, err := ask(in, "Expose the customer port on all IPv4 interfaces? (yes/no)", "no")
+	public, err := ask(in, "Expose customer ingress publicly? (no = local test only)", "no")
 	if err != nil {
 		return err
 	}
 	if public != "yes" && public != "no" {
 		return errors.New("enter yes or no")
 	}
-	port, err := ask(in, "Iran customer TCP port", "16443")
+	port, err := ask(in, "Iran customer port (example: 16443)", "16443")
 	if err != nil {
 		return err
 	}
-	app, err := ask(in, "Foreign application loopback port", "14443")
+	app, err := ask(in, "Sweden application port on 127.0.0.1 (example: 14443)", "14443")
 	if err != nil {
 		return err
 	}
+	udp, err := ask(in, "Forward UDP on the same customer port? (yes/no)", "no")
+	if err != nil {
+		return err
+	}
+	if udp != "yes" && udp != "no" {
+		return errors.New("enter yes or no")
+	}
+
 	p, e1 := strconv.Atoi(port)
 	a, e2 := strconv.Atoi(app)
 	if e1 != nil || e2 != nil {
 		return errors.New("ports must be integers")
 	}
-	site := siteSettings{Host: host, Bind: "127.0.0.1", Port: p, AppPort: a}
+	site := siteSettings{Host: host, Bind: "127.0.0.1", Port: p, AppPort: a, UDP: udp == "yes"}
 	if public == "yes" {
 		site.Bind = "0.0.0.0"
 	}
 	if err := site.validate(); err != nil {
 		return err
 	}
-	fmt.Printf("Iran: %s | Listener: %s:%d | Foreign app: 127.0.0.1:%d | TCP/TLS + QUIC\n", site.Host, site.Bind, site.Port, site.AppPort)
+	protocols := "TCP"
+	if site.UDP {
+		protocols = "TCP + UDP (UDP uses the primary path)"
+	}
+	fmt.Printf("\nIran host: %s\nCustomer ingress: %s:%d (%s)\nSweden application: 127.0.0.1:%d\nPrimary: TCP/TLS 17000 | Standby: QUIC UDP 17011\nTemporary setup: TCP 17005\n", site.Host, site.Bind, site.Port, protocols, site.AppPort)
 	ok, err := ask(in, "Create tunnel? (yes/no)", "no")
 	if err != nil || ok != "yes" {
 		return err
@@ -483,6 +518,11 @@ func installIran(ctx context.Context, site siteSettings) error {
 		return errors.New("this host is already configured as Foreign")
 	}
 	if role == "" {
+		if site.UDP {
+			if err := ensurePorts(nil, []string{udpConfig(site).Listen}); err != nil {
+				return err
+			}
+		}
 		if err := ensurePorts([]string{net.JoinHostPort(site.Bind, strconv.Itoa(site.Port)), "0.0.0.0:17000", "0.0.0.0:17010", "127.0.0.1:17003", "127.0.0.1:17013", "127.0.0.1:17101", "127.0.0.1:17102", "127.0.0.1:17104", "127.0.0.1:17111", "127.0.0.1:17112", "127.0.0.1:17114", "127.0.0.1:18443", "127.0.0.1:8787"}, []string{"0.0.0.0:17011", "127.0.0.1:17101", "127.0.0.1:17102", "127.0.0.1:17111", "127.0.0.1:17112"}); err != nil {
 			return err
 		}
@@ -545,7 +585,11 @@ func installIran(ctx context.Context, site siteSettings) error {
 		if err := config.validate(); err != nil {
 			return err
 		}
+		config.UDP = site.UDP
 		files["controller.json"] = jsonBytes(config)
+		if site.UDP {
+			files["udp.json"] = jsonBytes(udpConfig(site))
+		}
 		if err := installRole(files, "iran"); err != nil {
 			return err
 		}
@@ -553,7 +597,11 @@ func installIran(ctx context.Context, site siteSettings) error {
 	if err := atomicJSON(filepath.Join(adminHome, "site.json"), site); err != nil {
 		return err
 	}
-	return enableUnits(ctx, "neo-frp@frps-primary.service", "neo-frp@frps-standby.service", "neo-agent.service", "neo-haproxy.service", "neo-watch.service", "neo-dashboard.service")
+	units := []string{"neo-frp@frps-primary.service", "neo-frp@frps-standby.service", "neo-agent.service", "neo-haproxy.service", "neo-watch.service", "neo-dashboard.service", "neo-report.service"}
+	if site.UDP {
+		units = append(units, "neo-udp.service")
+	}
+	return enableUnits(ctx, units...)
 }
 
 func issueLink(ctx context.Context) error {

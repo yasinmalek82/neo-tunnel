@@ -93,6 +93,10 @@ func (a *agent) latest() *Reading {
 }
 
 func (a *agent) handle(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/reports/") {
+		receiveReport(a.config.StateDir, w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	switch {
 	case r.URL.Path == "/v1/resources" && r.Method == http.MethodGet:

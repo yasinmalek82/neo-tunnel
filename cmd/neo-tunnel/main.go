@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -151,7 +152,7 @@ func printProposal(p Proposal) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "neo-tunnel [status|pilot|dashboard|setup-iran|issue-link|join|calibrate [profile]|apply <proposal-id>|rollback|watch|agent] [--config FILE] [--json]")
+	fmt.Fprintln(os.Stderr, "neo-tunnel [status|first-check|telegram|pilot|dashboard|setup-iran|issue-link|join|ingress|enable-udp|calibrate [profile]|apply <proposal-id>|rollback|watch|agent] [--config FILE] [--json]")
 }
 
 func run(ctx context.Context, args []string) error {
@@ -206,8 +207,31 @@ func run(ctx context.Context, args []string) error {
 		}
 		return errors.New("invalid pilot or dashboard arguments")
 	}
+	if command == "telegram" && len(extra) == 1 {
+		return setupTelegram(ctx, bufio.NewReader(os.Stdin), extra[0])
+	}
+	if command == "telegram-worker" && len(extra) == 0 {
+		if configPath == "" {
+			configPath = configHome + "/agent.json"
+		}
+		var cfg AgentConfig
+		if err := readJSON(configPath, &cfg); err != nil {
+			return err
+		}
+		return botLoop(ctx, cfg.StateDir, telegramClient{base: telegramAPI, client: &http.Client{Timeout: 85 * time.Second, CheckRedirect: noRedirect}})
+	}
+	if command == "udp-edge" && len(extra) == 0 {
+		if configPath == "" {
+			configPath = configHome + "/udp.json"
+		}
+		var settings udpSettings
+		if err := readJSON(configPath, &settings); err != nil {
+			return err
+		}
+		return serveUDP(ctx, settings)
+	}
 	switch command {
-	case "setup-iran", "join", "issue-link", "enroll-serve":
+	case "setup-iran", "join", "issue-link", "enroll-serve", "ingress", "enable-udp":
 		return runSetup(ctx, command, extra)
 	}
 	if (command == "apply" && len(extra) != 1) || (command == "calibrate" && len(extra) > 1) ||
@@ -233,7 +257,7 @@ func run(ctx context.Context, args []string) error {
 		return serveAgent(ctx, config)
 	}
 	switch command {
-	case "status", "calibrate", "apply", "rollback", "watch":
+	case "status", "first-check", "report-worker", "calibrate", "apply", "rollback", "watch":
 	default:
 		usage()
 		return flag.ErrHelp
@@ -257,8 +281,13 @@ func run(ctx context.Context, args []string) error {
 	c := controller{config: config, digest: hex.EncodeToString(hash[:]), api: api,
 		probe: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, CheckRedirect: noRedirect}}
 	out := func(v any) error { return json.NewEncoder(os.Stdout).Encode(v) }
-	if command == "watch" {
+	switch command {
+	case "watch":
 		return c.watch(ctx)
+	case "first-check":
+		return c.firstCheck(ctx)
+	case "report-worker":
+		return c.reportLoop(ctx)
 	}
 	if command != "status" {
 		unlock, err := lock(config.StateDir)
@@ -324,6 +353,10 @@ func run(ctx context.Context, args []string) error {
 func (c *controller) watch(ctx context.Context) error {
 	var last map[string]bool
 	var snapshot dashboardSnapshot
+	var udp string
+	var sampledUDP time.Time
+	var observationDay time.Time
+	session := newID()[:8]
 	_ = readJSON(filepath.Join(c.config.StateDir, "dashboard.json"), &snapshot)
 	for ctx.Err() == nil {
 		health, err := c.health(ctx)
@@ -334,6 +367,7 @@ func (c *controller) watch(ctx context.Context) error {
 			fmt.Fprintln(os.Stderr, asciiConsole(err.Error()))
 		}
 		now := time.Now().UTC()
+
 		if now.Sub(snapshot.At) >= 15*time.Second || health[snapshot.Selected].ready() != (snapshot.Selected != "") {
 			if next, err := c.updateDashboard(ctx, snapshot, health, now); err == nil {
 				snapshot = next
@@ -341,6 +375,24 @@ func (c *controller) watch(ctx context.Context) error {
 				fmt.Fprintln(os.Stderr, asciiConsole(err.Error()))
 			}
 		}
+		var pilot Pilot
+		if readJSON(pilotPath(c.config.StateDir), &pilot) == nil && pilot.ID != "" && !now.Before(pilot.Start) && now.Before(pilot.End) {
+			if c.config.UDP && now.Sub(sampledUDP) >= 20*time.Second {
+				udp = udpStatus(c.config)
+				sampledUDP = now
+			}
+			day := now.Truncate(24 * time.Hour)
+			if day != observationDay {
+				prune(c.config.StateDir, "availability", day.Add(-7*24*time.Hour), "20060102")
+				observationDay = day
+			}
+			sample := sampleAvailability(now, health, udp)
+			sample.Session = session
+			if err := recordAvailability(c.config.StateDir, sample); err != nil {
+				fmt.Fprintln(os.Stderr, asciiConsole(err.Error()))
+			}
+		}
+
 		if unlock, err := lock(c.config.StateDir); err == nil {
 			func() {
 				defer unlock()

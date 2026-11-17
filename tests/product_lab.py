@@ -50,8 +50,19 @@ def run(image, bundle, upgrade_from=None):
         try:
             docker("exec", iran, "bash", f"{initial}/install.sh", "--bundle", initial, "--install-only")
             docker("exec", "-d", foreign, "python3", "-m", "http.server", "14443", "--bind", "127.0.0.1")
-            result = docker("exec", "-i", iran, "neo-tunnel", "setup-iran",
-                            data=f"{iran}\nno\n16443\n14443\nyes\n")
+            udp_fixture = """
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("127.0.0.1", 14443))
+while True:
+    data, source = s.recvfrom(2048)
+    s.sendto(b"sweden:" + data, source)
+"""
+            docker("exec", "-d", foreign, "python3", "-c", udp_fixture)
+            options = f"{iran}\nno\n16443\n14443\n"
+            if not upgrade_from:
+                options += "yes\n"
+            result = docker("exec", "-i", iran, "neo-tunnel", "setup-iran", data=options + "yes\n")
             assert result.isascii(), "installer printed non-ASCII text"
             link = re.search(r"'(neo-tunnel://[^']+)'", result).group(1)
             # Keep the temporary token out of command arguments.
@@ -85,9 +96,36 @@ def run(image, bundle, upgrade_from=None):
                 docker("exec", iran, "bash", "/neo-release/install.sh", "--bundle", "/neo-release", "--install-only")
                 after = docker("exec", iran, "systemctl", "show", "--property=MainPID", *units)
                 assert before == after, (before, after)
-                assert docker("exec", iran, "cat", "/usr/local/share/neo-tunnel/install-version").strip() == "v0.2.1"
+                assert docker("exec", iran, "cat", "/usr/local/share/neo-tunnel/install-version").strip() == "v0.2.2"
+                docker("exec", foreign, "bash", "/neo-release/install.sh", "--bundle", "/neo-release", "--install-only")
+                docker("exec", iran, "neo-tunnel", "enable-udp")
                 docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:16443/")
-                print("PASS v0.2.0 upgrade preserves all tunnel service processes and TCP forwarding", flush=True)
+                print("PASS upgrade preserves running Iran data-plane processes and TCP forwarding", flush=True)
+
+            ready(status)
+            check = docker("exec", iran, "neo-tunnel", "first-check")
+            assert "Primary UDP round trip: Ready" in check, check
+
+            def udp_echo(port):
+                code = """
+import socket, sys
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.settimeout(3)
+    s.sendto(b"test", ("127.0.0.1", int(sys.argv[1])))
+    assert s.recv(1024) == b"sweden:test"
+"""
+                docker("exec", iran, "python3", "-c", code, str(port))
+
+            udp_echo(16443)
+            print("PASS first connection checks and UDP application reply on the TCP customer port", flush=True)
+            docker("exec", iran, "neo-tunnel", "ingress", "16444", "local")
+            ready(lambda: docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:16444/"))
+            udp_echo(16444)
+            docker("exec", iran, "neo-tunnel", "pilot", "mark-cutover")
+            docker("exec", iran, "neo-tunnel", "ingress", "rollback")
+            ready(lambda: docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:16443/"))
+            udp_echo(16443)
+            print("PASS staged ingress move and rollback for both protocols", flush=True)
 
             def pilot_status():
                 return json.loads(docker("exec", iran, "neo-tunnel", "pilot", "status", "--json"))
@@ -110,10 +148,17 @@ def run(image, bundle, upgrade_from=None):
             assert after_restart == stopped, after_restart
             print("PASS automatic pilot and persistent opt-out after watcher restart", flush=True)
             docker("exec", iran, "neo-tunnel", "pilot", "export")
+            # Enable a local receiving spool without starting a Telegram worker
+            # or contacting a real bot. The transfer still uses live mTLS/frp.
+            docker("exec", foreign, "install", "-o", "neo", "-g", "neo", "-m", "0600",
+                   "/dev/null", "/var/lib/neo-tunnel/agent/telegram.json")
+            ready(lambda: docker("exec", foreign, "test", "-s",
+                                 f"/var/lib/neo-tunnel/agent/job-{stopped['pilot']['id']}-final") == "", 100)
+            print("PASS sanitized final report reaches Sweden over the authenticated management path", flush=True)
             panel = docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:8787/")
             assert 'dir="rtl"' in panel and "/report" in panel and ("TCP/TLS" in panel or "QUIC" in panel)
             report = docker("exec", iran, "tar", "-xOzf", "/var/lib/neo-tunnel/controller/pilot-report.tar.gz", "summary.json")
-            assert json.loads(report)["peer_minutes"] > 0, report
+            assert json.loads(report)["peer_minutes"] > 0 and json.loads(report)["cutover_at"], report
             print("PASS persistent pilot, sanitized bundle and private RTL dashboard", flush=True)
             def usage():
                 raw = docker("exec", iran, "systemctl", "show", "neo-dashboard.service",
@@ -143,7 +188,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="neo-tunnel-systemd:debian13")
     parser.add_argument("--bundle", type=Path, default=Path("build/release"))
-    parser.add_argument("--upgrade-from", type=Path, help="install v0.2.0 before upgrading to the new bundle")
+    parser.add_argument("--upgrade-from", type=Path, help="install v0.2.1 before upgrading to the new bundle")
     args = parser.parse_args()
     prior = args.upgrade_from.resolve(strict=True) if args.upgrade_from else None
     run(args.image, args.bundle.resolve(strict=True), prior)

@@ -1,0 +1,20 @@
+[Unit]
+Description=NEO Tunnel UDP customer ingress
+After=neo-frp@frps-primary.service
+
+[Service]
+Type=exec
+Slice=neo.slice
+User=neo
+Group=neo
+ExecStart=/usr/local/bin/neo-tunnel udp-edge --config /etc/neo-tunnel/udp.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -50,6 +50,7 @@ func (g *enrollmentGrant) consume(token string, now time.Time) error {
 }
 
 type siteSettings struct {
+	UDP     bool   `json:"udp,omitempty"`
 	Host    string `json:"host"`
 	Bind    string `json:"bind"`
 	Port    int    `json:"port"`

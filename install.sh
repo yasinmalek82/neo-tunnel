@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 export LC_ALL=C
-version=v0.2.1
+version=v0.2.2
 release="https://github.com/yasinmalek82/neo-tunnel/releases/download/$version"
 if (( EUID != 0 )); then
     printf 'Run this installer as root or use sudo.\n' >&2
@@ -75,8 +75,8 @@ put() {
 receipt=/usr/local/share/neo-tunnel/install-version
 previous=
 if [[ -f $receipt ]]; then previous=$(cat "$receipt"); fi
-if [[ -n $previous && $previous != "$version" && $previous != v0.2.0 ]]; then
-    printf 'This installer supports upgrades from v0.2.0 only.\n' >&2
+if [[ -n $previous && $previous != "$version" && $previous != v0.2.0 && $previous != v0.2.1 ]]; then
+    printf 'This installer supports upgrades from v0.2.0 or v0.2.1.\n' >&2
     exit 1
 fi
 if [[ ! -f $receipt ]]; then
@@ -87,15 +87,18 @@ if [[ ! -f $receipt ]]; then
         if [[ -e /etc/systemd/system/${file##*/} ]]; then printf 'An unmanaged NEO service already exists.\n' >&2; exit 1; fi
     done
 fi
-if [[ $previous == v0.2.0 ]]; then
-    # This update changes the controller and dashboard only. Keep the running data plane intact.
+if [[ $previous == v0.2.0 || $previous == v0.2.1 ]]; then
+    # Restart management services and retain the running data-plane processes.
     bin=/usr/local/bin/neo-tunnel
     cp -p -- "$bin" "$tmp/previous-binary"
     active=()
-    for unit in neo-watch.service neo-dashboard.service; do
+    for unit in neo-watch.service neo-dashboard.service neo-agent.service; do
         if systemctl is-active --quiet "$unit"; then active+=("$unit"); fi
     done
     rollback_upgrade() {
+        if [[ -f /etc/neo-tunnel/controller.json ]]; then
+            systemctl disable --now neo-report.service >/dev/null 2>&1 || true
+        fi
         printf 'Upgrade failed. Restoring the previous controller.\n' >&2
         if ! put 0755 "$tmp/previous-binary" "$bin"; then
             printf 'Could not restore the previous binary.\n' >&2
@@ -104,6 +107,10 @@ if [[ $previous == v0.2.0 ]]; then
         fi
         exit 1
     }
+    for unit in neo-report.service neo-telegram.service neo-udp.service; do
+        put 0644 "$tree/systemd/$unit" "/etc/systemd/system/$unit"
+    done
+    systemctl daemon-reload
     put 0755 "$tree/bin/neo-tunnel" "$bin"
     if (( ${#active[@]} )); then
         systemctl restart "${active[@]}" || rollback_upgrade
@@ -111,6 +118,9 @@ if [[ $previous == v0.2.0 ]]; then
         for unit in "${active[@]}"; do
             systemctl is-active --quiet "$unit" || rollback_upgrade
         done
+    fi
+    if systemctl is-active --quiet neo-watch.service; then
+        systemctl enable --now neo-report.service || rollback_upgrade
     fi
     printf '%s\n' "$version" > "$tmp/version"
     put 0644 "$tmp/version" "$receipt" || rollback_upgrade

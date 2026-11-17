@@ -41,20 +41,27 @@ type pilotMinute struct {
 	LastOutage *time.Time      `json:"last_outage,omitempty"`
 }
 
+type pilotCutover struct {
+	ID string    `json:"pilot_id"`
+	At time.Time `json:"at"`
+}
+
 type pilotSummary struct {
-	Pilot               Pilot      `json:"pilot"`
-	Active              bool       `json:"active"`
-	ExpectedMinutes     int        `json:"expected_minutes"`
-	ObservedMinutes     int        `json:"observed_minutes"`
-	HealthMinutes       int        `json:"health_minutes"`
-	UnreadyMinutes      int        `json:"unready_minutes"`
-	IranMinutes         int        `json:"iran_minutes"`
-	PeerMinutes         int        `json:"peer_minutes"`
-	IranPressureMinutes int        `json:"iran_pressure_minutes"`
-	PeerPressureMinutes int        `json:"peer_pressure_minutes"`
-	LastOutage          *time.Time `json:"last_outage,omitempty"`
-	CustomerSuccess     *float64   `json:"customer_success"`
-	WireOverhead        *uint64    `json:"wire_overhead_bytes"`
+	CutoverAt           *time.Time           `json:"cutover_at,omitempty"`
+	Availability        *availabilityMetrics `json:"availability,omitempty"`
+	Pilot               Pilot                `json:"pilot"`
+	Active              bool                 `json:"active"`
+	ExpectedMinutes     int                  `json:"expected_minutes"`
+	ObservedMinutes     int                  `json:"observed_minutes"`
+	HealthMinutes       int                  `json:"health_minutes"`
+	UnreadyMinutes      int                  `json:"unready_minutes"`
+	IranMinutes         int                  `json:"iran_minutes"`
+	PeerMinutes         int                  `json:"peer_minutes"`
+	IranPressureMinutes int                  `json:"iran_pressure_minutes"`
+	PeerPressureMinutes int                  `json:"peer_pressure_minutes"`
+	LastOutage          *time.Time           `json:"last_outage,omitempty"`
+	CustomerSuccess     *float64             `json:"customer_success"`
+	WireOverhead        *uint64              `json:"wire_overhead_bytes"`
 }
 
 func pilotPath(dir string) string         { return filepath.Join(dir, "pilot.json") }
@@ -151,6 +158,10 @@ func readPilotSummary(dir string, now time.Time) (pilotSummary, error) {
 	if s.Pilot.ID == "" {
 		return s, nil
 	}
+	var cutover pilotCutover
+	if readJSON(filepath.Join(dir, "pilot-cutover.json"), &cutover) == nil && cutover.ID == s.Pilot.ID {
+		s.CutoverAt = ptr(cutover.At)
+	}
 	s.Active = now.Before(s.Pilot.End)
 	end := minTime(now, s.Pilot.End)
 	s.ExpectedMinutes = max(0, int(end.Sub(s.Pilot.Start)/time.Minute))
@@ -209,6 +220,11 @@ func exportPilot(dir string, now time.Time) (string, error) {
 	if s.Pilot.ID == "" {
 		return "", errors.New("no pilot data to export")
 	}
+	metrics, err := readAvailability(dir, s.Pilot.Start, minTime(now, s.Pilot.End))
+	if err != nil {
+		return "", err
+	}
+	s.Availability = &metrics
 	target := filepath.Join(dir, "pilot-report.tar.gz")
 	file, err := os.CreateTemp(dir, ".report-")
 	if err != nil {
@@ -234,6 +250,12 @@ func exportPilot(dir string, now time.Time) (string, error) {
 	}
 	md := fmt.Sprintf("# NEO Tunnel pilot\n\nPeriod started %s.\n\n- Observed %d of %d elapsed minutes\n- Both path states known in %d minutes\n- Both fixed paths unready in %d sampled minutes\n- Iran resource coverage %d minutes, pressure %d minutes\n- Foreign resource coverage %d minutes, pressure %d minutes\n- Customer success and wire overhead unknown\n\n%s\n",
 		s.Pilot.Start.Format(time.RFC3339), s.ObservedMinutes, s.ExpectedMinutes, s.HealthMinutes, s.UnreadyMinutes, s.IranMinutes, s.IranPressureMinutes, s.PeerMinutes, s.PeerPressureMinutes, pilotAnalysis(s))
+	if s.CutoverAt != nil {
+		md += "\nCustomer cutover: " + s.CutoverAt.Format(time.RFC3339) + "\n"
+	}
+	md += fmt.Sprintf("\n- TCP: %d interruptions, %d recoveries, %d seconds down, %d seconds observed\n- UDP path: %d interruptions, %d recoveries, %d seconds down, %d seconds observed\n",
+		metrics.TCP.Interruptions, metrics.TCP.Recoveries, metrics.TCP.DownSeconds, metrics.TCP.KnownSeconds,
+		metrics.UDP.Interruptions, metrics.UDP.Recoveries, metrics.UDP.DownSeconds, metrics.UDP.KnownSeconds)
 	if err := write("report.md", []byte(md)); err != nil {
 		return "", err
 	}
@@ -302,6 +324,26 @@ func runPilot(dir, action string, useJSON bool) error {
 			}
 		}
 	}
+	if action == "mark-cutover" {
+		var p Pilot
+		if err := readJSON(pilotPath(dir), &p); err != nil {
+			return err
+		}
+		if p.ID == "" || !now.Before(p.End) {
+			return errors.New("an active pilot is required to mark cutover")
+		}
+		path := filepath.Join(dir, "pilot-cutover.json")
+		var previous pilotCutover
+		if readJSON(path, &previous) == nil && previous.ID == p.ID {
+			fmt.Printf("Customer cutover already recorded at %s.\n", previous.At.Format(time.RFC3339))
+			return nil
+		}
+		if err := atomicJSON(path, pilotCutover{ID: p.ID, At: now}); err != nil {
+			return err
+		}
+		fmt.Printf("Customer cutover recorded at %s.\n", now.Format(time.RFC3339))
+		return nil
+	}
 	if action == "export" {
 		path, err := exportPilot(dir, now)
 		if err != nil {
@@ -314,7 +356,7 @@ func runPilot(dir, action string, useJSON bool) error {
 		return nil
 	}
 	if action != "status" && action != "stop" {
-		return errors.New("usage: neo-tunnel pilot start|status|stop|export")
+		return errors.New("usage: neo-tunnel pilot start|status|stop|export|mark-cutover")
 	}
 	s, err := readPilotSummary(dir, now)
 	if err != nil {

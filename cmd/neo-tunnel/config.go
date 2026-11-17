@@ -49,6 +49,7 @@ type Profile struct {
 }
 
 type Config struct {
+	UDP           bool               `json:"udp,omitempty"`
 	PeerFallback  string             `json:"peer_fallback,omitempty"`
 	AutoPrefer    bool               `json:"auto_prefer"`
 	StateDir      string             `json:"state_dir"`

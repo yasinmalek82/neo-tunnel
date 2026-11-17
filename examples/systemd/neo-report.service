@@ -1,0 +1,22 @@
+[Unit]
+Description=NEO Tunnel reports to the foreign agent
+After=neo-watch.service
+
+[Service]
+Type=exec
+Slice=neo.slice
+User=neo
+Group=neo
+StateDirectory=neo-tunnel/controller
+ExecStart=/usr/local/bin/neo-tunnel report-worker --config /etc/neo-tunnel/controller.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+RestartSec=4s
+CPUQuota=5%
+MemoryMax=96M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=NEO Tunnel private Telegram bot
+After=network-online.target neo-agent.service
+
+[Service]
+Type=exec
+Slice=neo.slice
+User=neo
+Group=neo
+StateDirectory=neo-tunnel/agent
+ExecStart=/usr/local/bin/neo-tunnel telegram-worker --config /etc/neo-tunnel/agent.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+RestartSec=6s
+CPUQuota=5%
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

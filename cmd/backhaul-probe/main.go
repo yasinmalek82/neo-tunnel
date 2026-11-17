@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,15 +15,17 @@ import (
 	"slices"
 	"syscall"
 	"time"
+
+	"neo-tunnel/internal/canary"
 )
 
 const (
 	maxEcho   = 256 << 10
 	readyPath = "/readyz"
 	readyBody = "backhaul-ready-v1\n"
-	udpAsk    = "BHP1"
-	udpAck    = "BHA1"
-	udpSize   = len(udpAsk) + 16
+	udpAsk    = canary.UDPAsk
+	udpAck    = canary.UDPAck
+	udpSize   = canary.UDPSize
 )
 
 type report struct {
@@ -265,33 +265,7 @@ func checkTCP(ctx context.Context, client *http.Client, addr string) error {
 }
 
 func checkUDP(addr string, timeout time.Duration) error {
-	var packet [udpSize]byte
-	copy(packet[:], udpAsk)
-	if _, err := rand.Read(packet[len(udpAsk):]); err != nil {
-		return err
-	}
-	deadline := time.Now().Add(timeout)
-	conn, err := net.DialTimeout("udp", addr, timeout)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(deadline); err != nil {
-		return err
-	}
-	if _, err := conn.Write(packet[:]); err != nil {
-		return err
-	}
-	var reply [udpSize + 1]byte
-	n, err := conn.Read(reply[:])
-	if err != nil {
-		return err
-	}
-	copy(packet[:], udpAck)
-	if !bytes.Equal(reply[:n], packet[:]) {
-		return errors.New("unexpected UDP canary response")
-	}
-	return nil
+	return canary.CheckUDP(addr, timeout)
 }
 
 func summarize(protocol, address string, sent int, successful []time.Duration) report {

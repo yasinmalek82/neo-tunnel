@@ -2,7 +2,7 @@
 # Build release archives from the verified upstream archives and our cross-builds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-version=v0.2.1
+version=v0.2.2
 frp=0.72.0
 haproxy=3.4.7
 mkdir -p build/vendor build/release
