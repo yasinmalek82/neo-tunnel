@@ -17,9 +17,10 @@ const pilotDuration = 7 * 24 * time.Hour
 const maxPilotBytes = 32 << 20
 
 type Pilot struct {
-	ID    string    `json:"id"`
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
+	AutoDisabled bool      `json:"auto_disabled,omitempty"`
+	ID           string    `json:"id"`
+	Start        time.Time `json:"start"`
+	End          time.Time `json:"end"`
 }
 
 type pilotResources struct {
@@ -147,6 +148,9 @@ func readPilotSummary(dir string, now time.Time) (pilotSummary, error) {
 	if err := readJSON(pilotPath(dir), &s.Pilot); err != nil {
 		return s, err
 	}
+	if s.Pilot.ID == "" {
+		return s, nil
+	}
 	s.Active = now.Before(s.Pilot.End)
 	end := minTime(now, s.Pilot.End)
 	s.ExpectedMinutes = max(0, int(end.Sub(s.Pilot.Start)/time.Minute))
@@ -201,6 +205,9 @@ func exportPilot(dir string, now time.Time) (string, error) {
 	s, err := readPilotSummary(dir, now)
 	if err != nil {
 		return "", err
+	}
+	if s.Pilot.ID == "" {
+		return "", errors.New("no pilot data to export")
 	}
 	target := filepath.Join(dir, "pilot-report.tar.gz")
 	file, err := os.CreateTemp(dir, ".report-")
@@ -282,11 +289,14 @@ func runPilot(dir, action string, useJSON bool) error {
 	}
 	if action == "stop" {
 		var p Pilot
-		if err := readJSON(pilotPath(dir), &p); err != nil {
+		if err := readJSON(pilotPath(dir), &p); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		if now.Before(p.End) {
-			p.End = now
+		if !p.AutoDisabled || now.Before(p.End) {
+			p.AutoDisabled = true
+			if now.Before(p.End) {
+				p.End = now
+			}
 			if err := atomicJSON(pilotPath(dir), p); err != nil {
 				return err
 			}
@@ -312,6 +322,9 @@ func runPilot(dir, action string, useJSON bool) error {
 	}
 	if useJSON {
 		return json.NewEncoder(os.Stdout).Encode(s)
+	}
+	if s.Pilot.AutoDisabled {
+		fmt.Println("Automatic pilot start is disabled.")
 	}
 	fmt.Printf("Pilot active: %t. Samples: %d/%d minutes. Iran: %d. Foreign: %d.\n", s.Active, s.ObservedMinutes, s.ExpectedMinutes, s.IranMinutes, s.PeerMinutes)
 	return nil
@@ -343,18 +356,38 @@ func (c *controller) updateDashboard(ctx context.Context, prior dashboardSnapsho
 	}
 	pair := c.resourcePair(ctx)
 	next.Iran, next.Peer = pair[0], pair[1]
-	if !at.Truncate(time.Minute).Equal(prior.At.Truncate(time.Minute)) {
-		if unlock, err := lock(filepath.Join(c.config.StateDir, "pilot-lock")); err == nil {
-			defer unlock()
-			if err := completePilot(c.config.StateDir, at); err != nil {
-				return prior, err
-			}
-			if err := recordPilot(c.config.StateDir, at, next); err != nil {
-				return prior, err
-			}
-		}
+	minuteChanged := !at.Truncate(time.Minute).Equal(prior.At.Truncate(time.Minute))
+	if err := updatePilot(c.config.StateDir, at, next, minuteChanged); err != nil {
+		return prior, err
 	}
 	return next, atomicJSON(filepath.Join(c.config.StateDir, "dashboard.json"), next)
+}
+
+func updatePilot(dir string, at time.Time, snapshot dashboardSnapshot, minuteChanged bool) error {
+	unlock, err := lock(filepath.Join(dir, "pilot-lock"))
+	if err != nil {
+		// A CLI operation may be updating or exporting the current pilot.
+		return nil
+	}
+	defer unlock()
+	// An existing state file also records completion and an explicit opt-out.
+	if snapshot.Selected != "" {
+		if _, err := os.Stat(pilotPath(dir)); os.IsNotExist(err) {
+			if _, err := startPilot(dir, at); err != nil {
+				return err
+			}
+			minuteChanged = true
+		} else if err != nil {
+			return err
+		}
+	}
+	if !minuteChanged {
+		return nil
+	}
+	if err := completePilot(dir, at); err != nil {
+		return err
+	}
+	return recordPilot(dir, at, snapshot)
 }
 
 func completePilot(dir string, now time.Time) error {
@@ -365,7 +398,7 @@ func completePilot(dir string, now time.Time) error {
 		}
 		return err
 	}
-	if now.Before(p.End) {
+	if p.ID == "" || now.Before(p.End) {
 		return nil
 	}
 	info, err := os.Stat(filepath.Join(dir, "pilot-report.tar.gz"))

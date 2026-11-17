@@ -30,29 +30,33 @@ def ready(check, timeout=70):
     raise AssertionError("timed out waiting for test service")
 
 
-def run(image, bundle):
+def run(image, bundle, upgrade_from=None):
     key = f"neo-product-{os.getpid()}"
     network, iran, foreign = key + "-net", key + "-iran", key + "-foreign"
     with contextlib.ExitStack() as cleanup:
         docker("network", "create", "--internal", network)
         cleanup.callback(docker, "network", "rm", network)
+        initial = "/neo-previous" if upgrade_from else "/neo-release"
+        mounts = ["-v", f"{bundle}:/neo-release:ro"]
+        if upgrade_from:
+            mounts.extend(["-v", f"{upgrade_from}:/neo-previous:ro"])
         for name in (iran, foreign):
             docker("run", "-d", "--privileged", "--cgroupns=private", "--network", network,
                    "--name", name, "--tmpfs", "/run", "--tmpfs", "/run/lock",
-                   "-v", f"{bundle}:/neo-release:ro", image)
+                   *mounts, image)
             cleanup.callback(docker, "rm", "-f", name)
             ready(lambda: docker("exec", name, "systemctl", "show", "-p", "SystemState", "--value").strip()
                   in ("running", "degraded"))
         try:
-            docker("exec", iran, "bash", "/neo-release/install.sh", "--bundle", "/neo-release", "--install-only")
+            docker("exec", iran, "bash", f"{initial}/install.sh", "--bundle", initial, "--install-only")
             docker("exec", "-d", foreign, "python3", "-m", "http.server", "14443", "--bind", "127.0.0.1")
             result = docker("exec", "-i", iran, "neo-tunnel", "setup-iran",
                             data=f"{iran}\nno\n16443\n14443\nyes\n")
             assert result.isascii(), "installer printed non-ASCII text"
             link = re.search(r"'(neo-tunnel://[^']+)'", result).group(1)
             # Keep the temporary token out of command arguments.
-            install = ["exec", "-i", foreign, "bash", "/neo-release/install.sh",
-                       "--bundle", "/neo-release", "--join-stdin"]
+            install = ["exec", "-i", foreign, "bash", f"{initial}/install.sh",
+                       "--bundle", initial, "--join-stdin"]
             response = docker(*install, data=link + "\n")
             assert response.isascii(), "foreign installer printed non-ASCII text"
 
@@ -75,10 +79,36 @@ def run(image, bundle):
             ready(status)
             print("PASS idempotent foreign reinstall and ASCII terminal status", flush=True)
 
-            docker("exec", iran, "neo-tunnel", "pilot", "start")
-            ready(lambda: json.loads(docker("exec", iran, "neo-tunnel", "pilot", "status", "--json"))["observed_minutes"] > 0, 80)
-            docker("exec", iran, "systemctl", "restart", "neo-watch.service")
+            if upgrade_from:
+                units = ["neo-frp@frps-primary.service", "neo-frp@frps-standby.service", "neo-haproxy.service"]
+                before = docker("exec", iran, "systemctl", "show", "--property=MainPID", *units)
+                docker("exec", iran, "bash", "/neo-release/install.sh", "--bundle", "/neo-release", "--install-only")
+                after = docker("exec", iran, "systemctl", "show", "--property=MainPID", *units)
+                assert before == after, (before, after)
+                assert docker("exec", iran, "cat", "/usr/local/share/neo-tunnel/install-version").strip() == "v0.2.1"
+                docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:16443/")
+                print("PASS v0.2.0 upgrade preserves all tunnel service processes and TCP forwarding", flush=True)
+
+            def pilot_status():
+                return json.loads(docker("exec", iran, "neo-tunnel", "pilot", "status", "--json"))
+
+            ready(lambda: pilot_status()["peer_minutes"] > 0, 85)
+            first = pilot_status()
+            assert first["active"], first
             docker("exec", iran, "neo-tunnel", "pilot", "stop")
+            stopped = pilot_status()
+            assert not stopped["active"] and stopped["pilot"]["auto_disabled"], stopped
+
+            def dashboard_time():
+                raw = docker("exec", iran, "cat", "/var/lib/neo-tunnel/controller/dashboard.json")
+                return json.loads(raw)["at"]
+
+            before_restart = dashboard_time()
+            docker("exec", iran, "systemctl", "restart", "neo-watch.service")
+            ready(lambda: dashboard_time() != before_restart, 30)
+            after_restart = pilot_status()
+            assert after_restart == stopped, after_restart
+            print("PASS automatic pilot and persistent opt-out after watcher restart", flush=True)
             docker("exec", iran, "neo-tunnel", "pilot", "export")
             panel = docker("exec", iran, "curl", "-fsS", "http://127.0.0.1:8787/")
             assert 'dir="rtl"' in panel and "/report" in panel and ("TCP/TLS" in panel or "QUIC" in panel)
@@ -113,5 +143,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="neo-tunnel-systemd:debian13")
     parser.add_argument("--bundle", type=Path, default=Path("build/release"))
+    parser.add_argument("--upgrade-from", type=Path, help="install v0.2.0 before upgrading to the new bundle")
     args = parser.parse_args()
-    run(args.image, args.bundle.resolve(strict=True))
+    prior = args.upgrade_from.resolve(strict=True) if args.upgrade_from else None
+    run(args.image, args.bundle.resolve(strict=True), prior)

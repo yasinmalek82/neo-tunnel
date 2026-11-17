@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 export LC_ALL=C
-version=v0.2.0
+version=v0.2.1
 release="https://github.com/yasinmalek82/neo-tunnel/releases/download/$version"
 if (( EUID != 0 )); then
     printf 'Run this installer as root or use sudo.\n' >&2
@@ -73,8 +73,10 @@ put() {
 }
 # Preflight collisions before touching executable paths. Existing wizard installs are idempotent.
 receipt=/usr/local/share/neo-tunnel/install-version
-if [[ -f $receipt ]] && [[ $(cat "$receipt") != "$version" ]]; then
-    printf 'A different managed version is installed. Use a clean pilot host for this release.\n' >&2
+previous=
+if [[ -f $receipt ]]; then previous=$(cat "$receipt"); fi
+if [[ -n $previous && $previous != "$version" && $previous != v0.2.0 ]]; then
+    printf 'This installer supports upgrades from v0.2.0 only.\n' >&2
     exit 1
 fi
 if [[ ! -f $receipt ]]; then
@@ -85,15 +87,45 @@ if [[ ! -f $receipt ]]; then
         if [[ -e /etc/systemd/system/${file##*/} ]]; then printf 'An unmanaged NEO service already exists.\n' >&2; exit 1; fi
     done
 fi
-# Record the version before copying so rerunning a partial install can complete it.
-printf '%s\n' "$version" > "$tmp/version"
-put 0644 "$tmp/version" "$receipt"
-for bin in neo-tunnel backhaul-probe; do put 0755 "$tree/bin/$bin" "/usr/local/bin/$bin"; done
-for bin in frpc frps haproxy; do put 0755 "$tree/bin/$bin" "/usr/local/libexec/neo-tunnel/$bin"; done
-put 0755 "$tree/frp-run" /usr/local/libexec/neo-frp-run
-for file in "$tree"/templates/*; do put 0644 "$file" "/usr/local/share/neo-tunnel/${file##*/}"; done
-for file in "$tree"/systemd/*; do put 0644 "$file" "/etc/systemd/system/${file##*/}"; done
-systemctl daemon-reload
+if [[ $previous == v0.2.0 ]]; then
+    # This update changes the controller and dashboard only. Keep the running data plane intact.
+    bin=/usr/local/bin/neo-tunnel
+    cp -p -- "$bin" "$tmp/previous-binary"
+    active=()
+    for unit in neo-watch.service neo-dashboard.service; do
+        if systemctl is-active --quiet "$unit"; then active+=("$unit"); fi
+    done
+    rollback_upgrade() {
+        printf 'Upgrade failed. Restoring the previous controller.\n' >&2
+        if ! put 0755 "$tmp/previous-binary" "$bin"; then
+            printf 'Could not restore the previous binary.\n' >&2
+        elif (( ${#active[@]} )); then
+            systemctl restart "${active[@]}" || true
+        fi
+        exit 1
+    }
+    put 0755 "$tree/bin/neo-tunnel" "$bin"
+    if (( ${#active[@]} )); then
+        systemctl restart "${active[@]}" || rollback_upgrade
+        sleep 1
+        for unit in "${active[@]}"; do
+            systemctl is-active --quiet "$unit" || rollback_upgrade
+        done
+    fi
+    printf '%s\n' "$version" > "$tmp/version"
+    put 0644 "$tmp/version" "$receipt" || rollback_upgrade
+    printf 'Updated NEO Tunnel to %s.\n' "$version"
+else
+    # Record the version before copying so rerunning a partial install can complete it.
+    printf '%s\n' "$version" > "$tmp/version"
+    put 0644 "$tmp/version" "$receipt"
+    for bin in neo-tunnel backhaul-probe; do put 0755 "$tree/bin/$bin" "/usr/local/bin/$bin"; done
+    for bin in frpc frps haproxy; do put 0755 "$tree/bin/$bin" "/usr/local/libexec/neo-tunnel/$bin"; done
+    put 0755 "$tree/frp-run" /usr/local/libexec/neo-frp-run
+    for file in "$tree"/templates/*; do put 0644 "$file" "/usr/local/share/neo-tunnel/${file##*/}"; done
+    for file in "$tree"/systemd/*; do put 0644 "$file" "/etc/systemd/system/${file##*/}"; done
+    systemctl daemon-reload
+fi
 case "$action" in
     join) /usr/local/bin/neo-tunnel join ;;
     menu) /usr/local/bin/neo-tunnel ;;

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -150,5 +151,62 @@ func TestEnrollmentEndpointIssuesAndConsumesCredentials(t *testing.T) {
 	}
 	if got := request(payload).Code; got != 401 {
 		t.Fatalf("replay returned %d", got)
+	}
+}
+
+func TestPilotAutomaticallyStartsOnceWhenPathIsReady(t *testing.T) {
+	dir := t.TempDir()
+	c := controller{
+		config: Config{StateDir: dir, Initial: "primary"},
+		api:    &http.Client{},
+	}
+	now := time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)
+	unready := map[string]Health{"primary": {State: "DOWN"}}
+	ready := map[string]Health{"primary": {State: "UP", Check: "L7OK"}}
+	snapshot, err := c.updateDashboard(t.Context(), dashboardSnapshot{}, unready, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(pilotPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("an unready path started a pilot: %v", err)
+	}
+	now = now.Add(15 * time.Second)
+	if _, err := c.updateDashboard(t.Context(), snapshot, ready, now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := readPilotSummary(dir, now)
+	if err != nil || !before.Active || before.ObservedMinutes != 1 || !before.Pilot.End.Equal(now.Add(7*24*time.Hour)) {
+		t.Fatalf("automatic pilot summary %+v, error %v", before, err)
+	}
+	later := now.Add(8 * 24 * time.Hour)
+	if _, err := c.updateDashboard(t.Context(), dashboardSnapshot{}, ready, later); err != nil {
+		t.Fatal(err)
+	}
+	after, err := readPilotSummary(dir, later)
+	if err != nil || after.Active || after.Pilot.ID != before.Pilot.ID {
+		t.Fatalf("completion or restart replaced the first pilot: %+v, error %v", after, err)
+	}
+}
+
+func TestPilotStopBeforeReadinessDisablesAutomaticStart(t *testing.T) {
+	dir := t.TempDir()
+	if err := runPilot(dir, "stop", true); err != nil {
+		t.Fatal(err)
+	}
+	c := controller{
+		config: Config{StateDir: dir, Initial: "primary"},
+		api:    &http.Client{},
+	}
+	now := time.Now()
+	ready := map[string]Health{"primary": {State: "UP", Check: "L7OK"}}
+	if _, err := c.updateDashboard(t.Context(), dashboardSnapshot{}, ready, now); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := readPilotSummary(dir, now)
+	if err != nil || summary.Active || summary.ObservedMinutes != 0 {
+		t.Fatalf("pilot started after stop: %+v, error %v", summary, err)
+	}
+	if _, err := startPilot(dir, now); err != nil {
+		t.Fatalf("manual start after stop: %v", err)
 	}
 }

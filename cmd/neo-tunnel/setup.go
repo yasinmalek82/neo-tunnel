@@ -27,7 +27,7 @@ import (
 const configHome = "/etc/neo-tunnel"
 const adminHome = "/var/lib/neo-tunnel-admin"
 const templateHome = "/usr/local/share/neo-tunnel"
-const releaseVersion = "v0.2.0"
+const releaseVersion = "v0.2.1"
 const releaseURL = "https://github.com/yasinmalek82/neo-tunnel/releases/download/" + releaseVersion
 
 func runSetup(ctx context.Context, command string, args []string) error {
@@ -171,7 +171,7 @@ func terminalMenu(ctx context.Context) error {
 			}
 			err = run(ctx, args)
 		case "4":
-			fmt.Println("1. Start seven-day pilot\n2. Status\n3. Stop\n4. Export report")
+			fmt.Println("1. Start seven-day pilot\n2. Status\n3. Stop pilot and disable automatic start\n4. Export report")
 			var sub string
 			sub, err = ask(in, "Select an action", "2")
 			actions := map[string]string{"1": "start", "2": "status", "3": "stop", "4": "export"}

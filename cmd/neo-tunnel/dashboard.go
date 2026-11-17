@@ -112,7 +112,9 @@ func dashboardHandler(dir string) http.Handler {
 		}
 		var p Pilot
 		if readJSON(pilotPath(dir), &p) == nil {
-			if now.Before(p.End) {
+			if p.AutoDisabled {
+				view.Pilot = "پایلوت خودکار غیرفعال است"
+			} else if now.Before(p.End) {
 				view.Pilot = "در حال جمع‌آوری تا " + p.End.Format("2006-01-02 15:04 UTC")
 			} else {
 				view.Pilot = "دوره پایان یافته است"
