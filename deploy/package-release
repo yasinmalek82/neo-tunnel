@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Build release archives from the verified upstream archives and our cross-builds.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+version=v0.2.0
+frp=0.72.0
+haproxy=3.4.7
+mkdir -p build/vendor build/release
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+fetch() {
+    local url=$1 path=$2 digest=$3
+    if [[ ! -f $path ]]; then curl -fsSL --retry 2 --proto '=https' "$url" -o "$path"; fi
+    printf '%s  %s\n' "$digest" "$path" | shasum -a 256 -c
+}
+ha_src=build/vendor/haproxy.tgz
+fetch "https://www.haproxy.org/download/3.4/src/haproxy-$haproxy.tar.gz" "$ha_src" ccfd342f3724c2cd659574044d788f44e20b212467c6bd5edbbfc517a2775dca
+fetch "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5" build/vendor/musl-COPYRIGHT f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af
+make linux
+tar -xzf "$ha_src" -C "$work"
+for arch in amd64 arm64; do
+    case $arch in
+        amd64) upstream=build/lab/frp-amd64.tgz; sum=daf719b32ca2778770bb92955e231a07414d754378b9af328aa2642862479804;;
+        arm64) upstream=build/lab/frp.tgz; sum=02180b857480302fd934e9ddbd50fe2f73229f99062f88756abc6de9df5e95cf;;
+    esac
+    mkdir -p build/lab
+    fetch "https://github.com/fatedier/frp/releases/download/v$frp/frp_${frp}_linux_$arch.tar.gz" "$upstream" "$sum"
+    tar -xzf "$upstream" -C "$work"
+    if [[ ! -x build/vendor/$arch/haproxy ]]; then
+        mkdir -p "build/vendor/$arch"
+        docker run --rm --platform linux/"$arch" -v "$PWD/build/vendor:/vendor" alpine:3.22 sh -ec '
+            apk add --no-cache build-base linux-headers >/dev/null
+            tar -xf /vendor/haproxy.tgz -C /tmp
+            cd /tmp/haproxy-3.4.7
+            make -s -j4 TARGET=linux-musl LDFLAGS=-static
+            cp haproxy "/vendor/$1/haproxy"
+        ' sh "$arch"
+    fi
+    tree="$work/neo-tunnel"
+    mkdir -p "$tree"/{bin,templates,systemd,licenses}
+    cp "build/linux-$arch/"{neo-tunnel,backhaul-probe} "$tree/bin/"
+    cp "$work/frp_${frp}_linux_$arch/"{frpc,frps} "$tree/bin/"
+    cp "build/vendor/$arch/haproxy" "$tree/bin/"
+    cp examples/{frpc-primary,frpc-standby,frps-primary,frps-standby}.toml "$tree/templates/"
+    cp examples/haproxy.cfg "$tree/templates/"
+    cp examples/systemd/neo* "$tree/systemd/"
+    sed 's@/usr/sbin/haproxy@/usr/local/libexec/neo-tunnel/haproxy@g' examples/systemd/neo-haproxy.service > "$tree/systemd/neo-haproxy.service"
+    sed -e 's@/usr/local/bin/frps@/usr/local/libexec/neo-tunnel/frps@g' -e 's@/usr/local/bin/frpc@/usr/local/libexec/neo-tunnel/frpc@g' deploy/frp-run > "$tree/frp-run"
+    cp LICENSE THIRD_PARTY.md "$tree/licenses/"
+    cp "$work/frp_${frp}_linux_$arch/LICENSE" "$tree/licenses/frp.txt"
+    cp "$work/haproxy-$haproxy/LICENSE" "$tree/licenses/haproxy.txt"
+    cp "$ha_src" "$tree/licenses/haproxy-source.tar.gz"
+    cp build/vendor/musl-COPYRIGHT "$tree/licenses/musl.txt"
+    chmod 0755 "$tree/frp-run"
+    COPYFILE_DISABLE=1 tar -czf "build/release/neo-tunnel-$version-linux-$arch.tar.gz" -C "$work" neo-tunnel
+    rm -rf -- "$tree"
+done
+cp install.sh build/release/install.sh
+(
+    cd build/release
+    shasum -a 256 install.sh neo-tunnel-"$version"-linux-{amd64,arm64}.tar.gz > SHA256SUMS
+    shasum -a 256 -c SHA256SUMS
+)

@@ -1,0 +1,30 @@
+{
+  "state_dir": "/var/lib/neo-tunnel/controller",
+  "iran_agent": "https://127.0.0.1:18443",
+  "peer_agent": "https://peer-mgmt.example.net:18443",
+  "identity": {
+    "ca": "/etc/neo-tunnel/secrets/management-ca.crt",
+    "cert": "/etc/neo-tunnel/secrets/controller.crt",
+    "key": "/etc/neo-tunnel/secrets/controller.key"
+  },
+  "haproxy_socket": "/run/neo-tunnel/haproxy.sock",
+  "map_file": "/etc/neo-tunnel/runtime/route.map",
+  "initial": "primary",
+  "profiles": {
+    "primary": {
+      "canary": "127.0.0.1:17102",
+      "app_url": "http://127.0.0.1:17101/healthz",
+      "app_body": "ok\n",
+      "carrier": "tcp/tls",
+      "revision": "pilot-v1"
+    },
+    "standby": {
+      "canary": "127.0.0.1:17112",
+      "app_url": "http://127.0.0.1:17111/healthz",
+      "app_body": "ok\n",
+      "carrier": "quic",
+      "revision": "pilot-v1"
+    }
+  },
+  "auto_prefer": true
+}

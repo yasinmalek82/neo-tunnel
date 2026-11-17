@@ -1,0 +1,15 @@
+/build/
+__pycache__/
+*.pyc
+/secrets/
+/.env
+
+# Local project notes and generated credentials.
+/PLAN.md
+/PILOT.md
+*.key
+*.token
+*.pem
+*.crt
+.env.*
+.DS_Store

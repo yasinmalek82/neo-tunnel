@@ -1,0 +1,22 @@
+[Unit]
+Description=NEO tunnel controller recovery
+After=neo-agent.service neo-haproxy.service
+
+[Service]
+Type=simple
+Slice=neo.slice
+ExecStart=/usr/local/bin/neo-tunnel watch --config /etc/neo-tunnel/controller.json
+User=neo
+Group=neo
+StateDirectory=neo-tunnel/controller
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/neo-tunnel/runtime
+ProtectHome=true
+Restart=on-failure
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=30
+
+[Install]
+WantedBy=multi-user.target

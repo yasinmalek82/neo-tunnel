@@ -1,0 +1,16 @@
+[Unit]
+Description=NEO NaiveProxy local SOCKS bridge
+PartOf=neo-frp@frpc-naive.service
+After=network-online.target
+
+[Service]
+Type=simple
+Slice=neo-naive.slice
+User=neo
+Group=neo
+ExecStart=/usr/local/bin/naive /etc/neo-tunnel/secrets/naive-client.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+Restart=on-failure

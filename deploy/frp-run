@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+case "$1" in
+  frps-primary|frps-standby|frps-naive) binary=/usr/local/bin/frps ;;
+  frpc-primary|frpc-standby|frpc-naive) binary=/usr/local/bin/frpc ;;
+  *) exit 2 ;;
+esac
+case "$2" in
+  verify) exec "$binary" verify -c "/etc/neo-tunnel/$1.toml" ;;
+  run) exec "$binary" -c "/etc/neo-tunnel/$1.toml" ;;
+  *) exit 2 ;;
+esac

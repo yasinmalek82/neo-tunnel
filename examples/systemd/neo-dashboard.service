@@ -1,0 +1,20 @@
+[Unit]
+Description=NEO Tunnel private monitoring page
+After=neo-watch.service
+
+[Service]
+Type=simple
+Slice=neo.slice
+User=neo
+Group=neo
+ExecStart=/usr/local/bin/neo-tunnel dashboard --config /etc/neo-tunnel/controller.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+CPUQuota=5%
+MemoryMax=48M
+
+[Install]
+WantedBy=multi-user.target

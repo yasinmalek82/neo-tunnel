@@ -1,0 +1,52 @@
+# Kharej · standby. Set the Iran address and the name from the Iran certificate.
+serverAddr = "iran.example.net"
+serverPort = 17011
+loginFailExit = false
+udpPacketSize = 1500
+
+transport.protocol = "quic"
+transport.tls.enable = true
+transport.tls.serverName = "iran.example.net"
+transport.tls.certFile = "./secrets/standby-client.crt"
+transport.tls.keyFile = "./secrets/standby-client.key"
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "./secrets/standby.token"
+
+transport.tls.trustedCaFile = "./secrets/ca.crt"
+log.to = "console"
+log.disablePrintColor = true
+
+[[proxies]]
+name = "app-tcp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 14443
+remotePort = 17111
+healthCheck.type = "tcp"
+healthCheck.intervalSeconds = 2
+healthCheck.timeoutSeconds = 1
+healthCheck.maxFailed = 2
+
+[[proxies]]
+name = "app-udp"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 14443
+remotePort = 17111
+
+[[proxies]]
+name = "canary-tcp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 18080
+remotePort = 17112
+
+[[proxies]]
+name = "canary-udp"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 18080
+remotePort = 17112

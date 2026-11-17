@@ -1,0 +1,14 @@
+// Only the listed tunnel units may be started or stopped by the NEO agent.
+polkit.addRule(function(action, subject) {
+    const units = [
+        "neo-frp@frps-primary.service",
+        "neo-frp@frpc-primary.service",
+        "neo-frp@frps-naive.service",
+        "neo-frp@frpc-naive.service"
+    ];
+    if (subject.user === "neo" && action.id === "org.freedesktop.systemd1.manage-units" &&
+        units.indexOf(action.lookup("unit")) !== -1 &&
+        ["start", "stop"].indexOf(action.lookup("verb")) !== -1) {
+        return polkit.Result.YES;
+    }
+});

@@ -1,0 +1,21 @@
+[Unit]
+Description=NEO tunnel resource agent
+After=network-online.target
+
+[Service]
+Type=simple
+Slice=neo.slice
+ExecStart=/usr/local/bin/neo-tunnel agent --config /etc/neo-tunnel/agent.json
+User=neo
+Group=neo
+StateDirectory=neo-tunnel/agent
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+# Iran · primary. Bind the transport to an explicit local interface for a two-host pilot.
+bindAddr = "127.0.0.1"
+bindPort = 17000
+proxyBindAddr = "127.0.0.1"
+allowPorts = [{ single = 17101 }, { single = 17102 }]
+maxPortsPerClient = 4
+udpPacketSize = 1500
+userConnTimeout = 3
+
+transport.tls.force = true
+transport.tls.certFile = "./secrets/iran.crt"
+transport.tls.keyFile = "./secrets/iran.key"
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "./secrets/primary.token"
+
+transport.tls.trustedCaFile = "./secrets/ca.crt"
+log.to = "console"
+log.disablePrintColor = true
+
+metricsServer.addr = "127.0.0.1"
+metricsServer.port = 17003

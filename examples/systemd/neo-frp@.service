@@ -1,0 +1,20 @@
+[Unit]
+Description=NEO frp %i
+After=network-online.target
+
+[Service]
+Type=simple
+Slice=neo.slice
+User=neo
+Group=neo
+WorkingDirectory=/etc/neo-tunnel
+ExecStartPre=/usr/local/libexec/neo-frp-run %i verify
+ExecStart=/usr/local/libexec/neo-frp-run %i run
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

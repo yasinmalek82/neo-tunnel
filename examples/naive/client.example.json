@@ -1,0 +1,4 @@
+{
+  "listen": "socks://127.0.0.1:1080",
+  "proxy": "https://NEO_PROXY_USER:NEO_PROXY_PASSWORD@proxy.example.net"
+}

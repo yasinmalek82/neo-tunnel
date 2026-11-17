@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+  <title>پایش NEO Tunnel</title>
+  <style>
+    :root{color-scheme:light;--ink:#172b28;--muted:#425b56;--paper:#f4f7f4;--rule:#cedbd4;--accent:#126451}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 system-ui,Tahoma,sans-serif}
+    main{max-width:850px;margin:auto;padding:3rem 1.4rem}header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:.25rem 1rem;border-bottom:2px solid var(--ink);padding-bottom:1rem}
+    h1,h2,p,dl{margin:0}h1{font-size:clamp(1.65rem,5vw,2.35rem);font-weight:750;line-height:1.3}h2{font-size:1.14rem;margin-bottom:.75rem}
+    section{padding:1.45rem 0;border-bottom:1px solid var(--rule)}.subtle{color:var(--muted)}.summary{background:#e4efe8;padding:.8rem 1rem;margin-bottom:1rem;border-radius:.5rem}
+    dl{display:grid;grid-template-columns:minmax(8rem,1fr) 1.5fr;gap:.45rem .75rem}dt{color:var(--muted)}dd{margin:0;font-weight:650;overflow-wrap:anywhere}
+    .hosts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem 2rem}.host h3{margin:0 0 .5rem;font-size:1rem;color:var(--accent)}
+    .pilot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem 1rem}a{color:var(--accent);font-weight:700;text-underline-offset:.22em}a:focus-visible{outline:2px solid var(--accent);outline-offset:.2rem}bdi{font-variant-numeric:tabular-nums}
+    code{direction:ltr;unicode-bidi:isolate}.support{margin-top:.5rem;margin-bottom:.1rem}
+    @media(max-width:570px){main{padding:1.5rem 1rem}.hosts{grid-template-columns:1fr}dl{grid-template-columns:minmax(7rem,1fr) 1.3fr}}
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>وضعیت تانل <bdi>NEO</bdi></h1><p class="subtle">آخرین بررسی <bdi>{{.Updated}}</bdi></p></header>
+    <section aria-label="مسیرها">
+      <p class="summary">{{.Analysis}}</p>
+      <dl>
+        <dt>مسیر اتصال‌های جدید</dt><dd><bdi>{{.Route}}</bdi></dd>
+        <dt>پشتیبان آماده</dt><dd><bdi>{{.Standby}}</bdi></dd>
+        <dt>آخرین قطعی</dt><dd><bdi>{{.Outage}}</bdi></dd>
+        <dt>آخرین بازیابی</dt><dd><bdi>{{.Recovery}}</bdi></dd>
+      </dl>
+    </section>
+    <section>
+      <h2>منابع سرورها</h2>
+      <div class="hosts">{{range .Hosts}}
+        <article class="host"><h3>{{.Name}}</h3><dl>
+          <dt>وضعیت</dt><dd>{{.Status}}</dd>
+          <dt>مصرف پردازنده</dt><dd><bdi>{{.CPU}}</bdi></dd>
+          <dt>حافظهٔ آزاد</dt><dd><bdi>{{.Memory}}</bdi></dd>
+          <dt>حافظهٔ ابزار</dt><dd><bdi>{{.Tool}}</bdi></dd>
+        </dl></article>{{end}}
+      </div>
+    </section>
+    <section>
+      <h2>گزارش هفت‌روزه</h2>
+      <div class="pilot"><p>{{.Pilot}}</p>{{if .Report}}<a href="/report" download>دانلود گزارش</a>{{end}}</div>
+      {{if not .Report}}<p class="subtle support">برای ساخت فایل گزارش، <code>neo-tunnel pilot export</code> را اجرا کنید.</p>{{end}}
+    </section>
+  </main>
+</body>
+</html>

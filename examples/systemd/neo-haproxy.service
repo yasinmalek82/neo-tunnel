@@ -1,0 +1,20 @@
+[Unit]
+Description=NEO tunnel HAProxy front door
+After=network-online.target
+
+[Service]
+Type=simple
+Slice=neo.slice
+User=neo
+Group=neo
+RuntimeDirectory=neo-tunnel
+ExecStartPre=/usr/sbin/haproxy -c -f /etc/neo-tunnel/haproxy.cfg
+ExecStart=/usr/sbin/haproxy -db -f /etc/neo-tunnel/haproxy.cfg
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

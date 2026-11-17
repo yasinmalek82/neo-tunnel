@@ -1,0 +1,52 @@
+# Kharej · primary. Set the Iran address and the name from the Iran certificate.
+serverAddr = "iran.example.net"
+serverPort = 17000
+loginFailExit = false
+udpPacketSize = 1500
+
+transport.protocol = "tcp"
+transport.tls.enable = true
+transport.tls.serverName = "iran.example.net"
+transport.tls.certFile = "./secrets/primary-client.crt"
+transport.tls.keyFile = "./secrets/primary-client.key"
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "./secrets/primary.token"
+
+transport.tls.trustedCaFile = "./secrets/ca.crt"
+log.to = "console"
+log.disablePrintColor = true
+
+[[proxies]]
+name = "app-tcp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 14443
+remotePort = 17101
+healthCheck.type = "tcp"
+healthCheck.intervalSeconds = 2
+healthCheck.timeoutSeconds = 1
+healthCheck.maxFailed = 2
+
+[[proxies]]
+name = "app-udp"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 14443
+remotePort = 17101
+
+[[proxies]]
+name = "canary-tcp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 18080
+remotePort = 17102
+
+[[proxies]]
+name = "canary-udp"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 18080
+remotePort = 17102

@@ -1,0 +1,6 @@
+[Unit]
+Description=NEO tunnel aggregate accounting
+
+[Slice]
+CPUAccounting=true
+MemoryAccounting=true

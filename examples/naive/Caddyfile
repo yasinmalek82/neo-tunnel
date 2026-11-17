@@ -1,0 +1,25 @@
+{
+	admin off
+	auto_https off
+	order forward_proxy first
+	servers {
+		protocols h2
+	}
+}
+
+https://:443, https://proxy.example.net:443 {
+	tls /etc/neo-tunnel/secrets/proxy.crt /etc/neo-tunnel/secrets/proxy.key
+	@blocked expression `{method} != "CONNECT" || {hostport} != "127.0.0.1:17020"`
+	route {
+		respond @blocked "Forbidden" 403
+		forward_proxy {
+			basic_auth {$NEO_PROXY_USER} {$NEO_PROXY_PASSWORD}
+			ports 17020
+			acl {
+				allow 127.0.0.1/32
+				deny all
+			}
+		}
+		respond "Forbidden" 403
+	}
+}

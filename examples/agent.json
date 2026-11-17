@@ -1,0 +1,11 @@
+{
+  "listen": "127.0.0.1:18443",
+  "state_dir": "/var/lib/neo-tunnel/agent",
+  "identity": {
+    "ca": "/etc/neo-tunnel/secrets/management-ca.crt",
+    "cert": "/etc/neo-tunnel/secrets/agent.crt",
+    "key": "/etc/neo-tunnel/secrets/agent.key"
+  },
+  "tool_cgroup": "/sys/fs/cgroup/neo.slice",
+  "units": {}
+}
